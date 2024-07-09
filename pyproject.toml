@@ -1,0 +1,4 @@
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "/Users/huvinesh/miniconda/envs"
+venv = "/Users/huvinesh/miniconda/envs/keras"
