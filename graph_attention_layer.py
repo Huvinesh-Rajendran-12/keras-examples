@@ -3,7 +3,6 @@ import keras.api.ops as ops
 import os
 
 os.environ["KERAS_BACKEND"] = "jax"
-
 # Example usage
 batch_size: int = 1
 num_nodes: int = 10
