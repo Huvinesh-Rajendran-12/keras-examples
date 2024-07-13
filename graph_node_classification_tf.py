@@ -1,11 +1,9 @@
 import os
 
-os.environ["KERAS_BACKEND"] = "jax"
-from jax._src.typing import Array
+os.environ["KERAS_BACKEND"] = "tensorflow"
 from typing import Tuple, List
+import tensorflow as tf
 from dataclasses import dataclass
-import jax
-import jax.numpy as jnp
 import keras
 import keras.api.ops as ops
 import networkx as nx
@@ -48,7 +46,7 @@ def build_graph(node_features, new_instances, edges, papers, num_classes):
 
     # Second we add the M edges (citations) from each new node to a set
     # of existing nodes in a particular subject
-    new_node_indices = jnp.array([i + num_nodes for i in range(num_classes)])
+    new_node_indices = np.array([i + num_nodes for i in range(num_classes)])
 
     def process_subject(subject_idx, subject_papers):
         key = jax.random.PRNGKey(0)  # You might want to use a different seed
@@ -56,13 +54,13 @@ def build_graph(node_features, new_instances, edges, papers, num_classes):
         # Select random x papers specific subject.
         key, subkey = jax.random.split(key)
         selected_paper_indices1 = jax.random.choice(
-            subkey, jnp.array(subject_papers), shape=(5,), replace=False
+            subkey, np.array(subject_papers), shape=(5,), replace=False
         )
 
         # Select random y papers from any subject (where y < x).
         key, subkey = jax.random.split(key)
         selected_paper_indices2 = jax.random.choice(
-            subkey, jnp.array(papers.paper_id), shape=(2,), replace=False
+            subkey, np.array(papers.paper_id), shape=(2,), replace=False
         )
 
         # Merge the selected paper indices.
@@ -82,12 +80,12 @@ def build_graph(node_features, new_instances, edges, papers, num_classes):
         return new_citations
 
     # Use vmap to process all subjects
-    subjects = jnp.array(papers.groupby("subject").groups.keys())
-    subject_papers = jnp.array(
-        [jnp.array(group.paper_id) for _, group in papers.groupby("subject")]
+    subjects = np.array(papers.groupby("subject").groups.keys())
+    subject_papers = np.array(
+        [np.array(group.paper_id) for _, group in papers.groupby("subject")]
     )
 
-    new_citations = jax.vmap(process_subject)(jnp.arange(len(subjects)), subject_papers)
+    new_citations = jax.vmap(process_subject)(np.arange(len(subjects)), subject_papers)
     new_citations = ops.reshape(new_citations, (-1, 2)).T
 
     new_edges = ops.concatenate([edges, new_citations], axis=1)
@@ -121,12 +119,12 @@ def generate_random_instances(num_instances, x_train):
     token_probability = ops.mean(x_train, axis=0)
 
     # Convert token_probability to JAX array
-    token_probability = jnp.array(token_probability)
+    token_probability = np.array(token_probability)
 
     # Generate random numbers and create instances using JAX
     def generate_instance(key):
         probabilities = jax.random.uniform(key, shape=token_probability.shape)
-        return (probabilities <= token_probability).astype(jnp.int32)
+        return (probabilities <= token_probability).astype(np.int32)
 
     # Create a PRNG key
     key = jax.random.PRNGKey(0)
@@ -221,8 +219,8 @@ class GraphConvLayer(keras.Layer):
         self.update_fn = create_update_fn(hidden_units, dropout_rate, self.combination)
 
     def prepare(
-        self, node_representations: Array, weights: Array | None = None
-    ) -> Array:
+        self, node_representations: tf.Tensor, weights: tf.Tensor | None = None
+    ) -> tf.Tensor:
         messages = self.ffn_prepare(node_representations)
         if weights is not None:
             messages = messages * ops.expand_dims(weights, -1)
@@ -230,10 +228,10 @@ class GraphConvLayer(keras.Layer):
 
     def _reduce(
         self,
-        node_indices: Array,
-        neighbour_messages: Array,
-        node_representations: Array,
-    ) -> Array:
+        node_indices: tf.Tensor,
+        neighbour_messages: tf.Tensor,
+        node_representations: tf.Tensor,
+    ) -> tf.Tensor:
         n_nodes = node_representations.shape[0]
         reduce_msg = []
         if self.reduce == "sum":
@@ -254,9 +252,11 @@ class GraphConvLayer(keras.Layer):
             reduce_msg = ops.segment_max(
                 neighbour_messages, node_indices, num_segments=n_nodes
             )
-        return jnp.array(reduce_msg)
+        return np.array(reduce_msg)
 
-    def update(self, node_representations: Array, reduced_messages: Array) -> Array:
+    def update(
+        self, node_representations: tf.Tensor, reduced_messages: tf.Tensor
+    ) -> tf.Tensor:
         h = []
         if self.combination == "gru":
             h = ops.stack([node_representations, reduced_messages], axis=1)
@@ -274,9 +274,9 @@ class GraphConvLayer(keras.Layer):
         node_embds = (
             ops.nn.normalize(node_embds, axis=-1) if self.normalize else node_embds
         )
-        return jnp.array(node_embds)
+        return np.array(node_embds)
 
-    def call(self, inputs: Tuple[Array, Array, Array]) -> Array:
+    def call(self, inputs: Tuple[tf.Tensor, tf.Tensor, tf.Tensor]) -> tf.Tensor:
         node_representations, edges, edge_W = inputs
         node_idx, neighbour_idx = edges[0], edges[1]
         neighbour_representations = ops.take(node_representations, neighbour_idx)
@@ -292,7 +292,7 @@ class GraphConvLayer(keras.Layer):
 class GNNNodeClassifier(keras.Model):
     def __init__(
         self,
-        graph_info: Tuple[Array, Array, Array | None],
+        graph_info: Tuple[tf.Tensor, tf.Tensor, tf.Tensor | None],
         num_classes: int,
         hidden_units: List[int],
         reduce: str = "sum",
@@ -391,10 +391,10 @@ def main():
     n_features = len(feature_names)
     n_classes: int = len(class_idx)
 
-    edges: Array[int] = jnp.array(citations[["source", "target"]]).T
-    edge_W: Array = jnp.array(ops.ones(shape=edges.shape[1]))
+    edges: tf.Tensor = np.array(citations[["source", "target"]]).T
+    edge_W: tf.Tensor = np.array(ops.ones(shape=edges.shape[1]))
     node_features = ops.cast(
-        jnp.array(papers.sort_values("paper_id")[feature_names]), dtype="float32"
+        np.array(papers.sort_values("paper_id")[feature_names]), dtype="float32"
     )
     graph_info = (node_features, edges, edge_W)
 
@@ -414,10 +414,10 @@ def main():
 
     model.summary()
 
-    X_train = jnp.array(train_data["paper_id"])
+    X_train = np.array(train_data["paper_id"])
     y_train = train_data["subject"]
 
-    X_test = jnp.array(test_data["paper_id"])
+    X_test = np.array(test_data["paper_id"])
     y_test = test_data["subject"]
 
     model.compile(
